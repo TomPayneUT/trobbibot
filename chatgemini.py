@@ -7,7 +7,7 @@ from tts import generate_wav
 from playaudiopygame import play_audio
 import google.genai as genai
 
-client = genai.Client(api_key="AIzaSyDMQwvws5Zj2_8ILXQrnn8K-vNydSYMo3U")
+client = genai.Client(api_key="dont hardcode your api key you dummy")
 
 while True:
     prompt = input('prompt (type r to record, or q to quit): ')

@@ -3,14 +3,18 @@ import subprocess
 import os
 from transcriber import transcribe_audio
 from ttsmp3 import generate_mp3
-from llm import ask
+from llm import ask # make chat local by uncommenting this and commenting out the genai code below
 import serial
 import time
 from picamera2 import Picamera2
 import io
+import threading
+#import google.genai as genai  # make chat online by uncommenting this and commenting out the local llm code above
+
 
 app = Flask(__name__)
 
+#client = genai.Client(api_key="dont hardcode your api key you dummy")
 counter = 0
 transcription = ''
 try:
@@ -61,7 +65,14 @@ def upload_audio():
     global transcription
     transcription = transcribe_audio(mp3_path)
 
+    #uncomment the following line to use a local llm instead of genai
     text_answer = ask(transcription)
+    #uncomment the following lines to use genai instead of a local llm
+    #text_answer = client.models.generate_content(
+    #        model="gemini-2.5-flash", contents=transcription
+    #    )
+
+
     generate_mp3(text_answer, 'voices/en_GB-semaine-medium.onnx', mp3_path)
 
     return jsonify({'success': True, 'transcription' : transcription, 'text_answer': text_answer})
@@ -99,33 +110,59 @@ def get_audio():
     #return send_file(mp3_path, mimetype='audio/mpeg')
 
 
+# --- Camera Setup ---
+picam2 = Picamera2()
+config = picam2.create_video_configuration(main={"size": (640, 480)})
+picam2.configure(config)
+picam2.start()
+
+class CameraStreamer:
+    def __init__(self):
+        self.frame = None
+        self.running = False
+        self.lock = threading.Lock()
+        # Start a background thread to update the frame
+        threading.Thread(target=self._update, daemon=True).start()
+
+    def _update(self):
+        while True:
+            if self.running:
+                stream = io.BytesIO()
+                # Capture frame
+                picam2.capture_file(stream, format='jpeg')
+                
+                with self.lock:
+                    self.frame = stream.getvalue()
+            else:
+                time.sleep(0.5)  # Sleep briefly when not running to reduce CPU usage
+
+    def get_frame(self):
+        with self.lock:
+            return self.frame
+
+# Initialize our single broadcaster
+streamer = CameraStreamer()
+
+def generate_frames():
+    while True:
+        frame_bytes = streamer.get_frame()
+        if frame_bytes:
+            yield (b'--frame\r\n'
+                   b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
+        # Tiny sleep to prevent the loop from eating 100% CPU
+        import time
+        time.sleep(0.03) # Roughly 30 FPS
 
 @app.route('/stream')
 def get_stream():
-    picam2 = Picamera2()
-    config = picam2.create_video_configuration(main={"size": (640, 480)})
-    picam2.configure(config)
-    picam2.start()
-
-    def generate_frames():
-        while True:
-            # Create an in-memory binary stream
-            stream = io.BytesIO()
-            
-            # Capture directly to the stream in JPEG format
-            # use_video_port=True is faster for streaming
-            picam2.capture_file(stream, format='jpeg')
-            
-            # Reset stream pointer to the beginning to read it
-            stream.seek(0)
-            frame_bytes = stream.read()
-
-            yield (b'--frame\r\n'
-                b'Content-Type: image/jpeg\r\n\r\n' + frame_bytes + b'\r\n')
-            
     return Response(generate_frames(),
                     mimetype='multipart/x-mixed-replace; boundary=frame')
 
+# Add a route to toggle the state
+@app.route('/toggle_stream/<state>')
+def toggle_stream(state):
+    streamer.running = (state == 'on')
+    return f"Stream is {state}"
 
 #app.run(host='0.0.0.0', port=5000, ssl_context=('cert.pem', 'key.pem'))
 app.run(host='0.0.0.0', port=5000)

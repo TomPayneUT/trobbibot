@@ -16,8 +16,13 @@
 <body>
     <h2>Trobbi Controller</h2>
 
-    <div id="cameraFeed">
-        <img src="{{ url_for('stream') }}" width="100%">
+    <div id="cameraContainer">
+        <img id="cameraFeed" src="" width="100%" style="display:none; background:#000;">
+        <div id="placeholder" style="width:100%; height:300px; background:#333; color:white; display:flex; align-items:center; justify-content:center;">
+            Stream is Offline
+        </div>
+        
+        <button id="streamBtn" onclick="toggleStream()">Start Stream</button>
     </div>
 
 
@@ -45,7 +50,35 @@
     </audio>
  
     <script>
-        
+
+        let streaming = false;
+
+        function toggleStream() {
+            const img = document.getElementById('cameraFeed');
+            const placeholder = document.getElementById('placeholder');
+            const btn = document.getElementById('streamBtn');
+
+            streaming = !streaming;
+
+            if (streaming) {
+                // 1. Tell Server to start capturing
+                fetch('/toggle_stream/on');
+                // 2. Set the src to start the MJPEG stream
+                img.src = "/stream?" + new Date().getTime();
+                img.style.display = "block";
+                placeholder.style.display = "none";
+                btn.innerText = "Stop Stream";
+            } else {
+                // 1. Tell Server to stop capturing
+                fetch('/toggle_stream/off');
+                // 2. Kill the stream source to stop downloading data
+                img.src = "";
+                img.style.display = "none";
+                placeholder.style.display = "flex";
+                btn.innerText = "Start Stream";
+            }
+        }
+                
         const robot_audio = document.getElementById('sound');
         const source = document.getElementById('audioSrc');
         var startTime;
