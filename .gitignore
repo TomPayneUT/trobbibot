@@ -1,0 +1,6 @@
+# Ignore AI models and cache
+*.onnx
+.cache/
+**/blobs/
+voices/
+home/

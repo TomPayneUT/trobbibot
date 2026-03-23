@@ -1,0 +1,200 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Trobbi remote</title>
+
+    <style>
+        body { font-family: system-ui, sans-serif; text-align: center; padding: 60px; }
+        #counter { font-size: 2rem; font-weight: bold; color: #2c3e50; }
+        button {padding: 14px 32px; font-size: 1.2rem; cursor: pointer; }
+    </style>
+
+</head>
+
+<body>
+    <h2>Trobbi Controller</h2>
+
+    <div id="cameraFeed">
+        <img src="{{ url_for('stream') }}" width="100%">
+    </div>
+
+
+    <button id="F" class="remotectl">^</button>
+    <br>
+    <button id="L" class="remotectl">&lt;</button><button id="S" class="remotectl">stop</button><button id="R" class="remotectl">&gt;</button>
+    <br>
+    <button id="B" class="remotectl">v</button>
+    <br><br>
+    <button id="K" class="remotectl">&lt;&lt;</button><button id="E" class="remotectl">&gt;&gt;</button>
+
+
+    <br><br>
+    <p>Current value:</p>
+    <div id="counter" >{{ counter }}</div>
+    <button id="btn-increment">Increment (AJAX)</button>
+    <button id="btn-play-only">Play the wav</button>
+    <br>
+    <button id="record-btn">Hold to talk to Trabi</button>
+    <p id="status"> Ready - speak clearly</p>
+    <div id="result" style="margin-top: 20px; font-size: 1.3rem;"></div>
+
+    <audio id="sound" controls>
+        <source id="audioSrc" src="" type="audio/mpeg">
+    </audio>
+ 
+    <script>
+        
+        const robot_audio = document.getElementById('sound');
+        const source = document.getElementById('audioSrc');
+        var startTime;
+        var endTime;
+
+        
+        document.querySelectorAll('.remotectl').forEach(btn => {
+            btn.addEventListener('click', sendCommand)
+            btn.addEventListener('pointerdown', sendCommand)
+        })
+
+        async function sendCommand(e){
+            let cmd = e.currentTarget.id;
+            
+            const resp = await fetch('/move?dir='+encodeURIComponent(cmd));
+            if (!resp.ok) console.error(resp.status);    
+        }
+
+
+        function playSound() {
+            const timestamp = new Date().getTime();
+            source.src = "/get-audio?t="+timestamp;
+            //robot_audio.currentTime = 0;
+            robot_audio.load();
+            robot_audio.play().catch( err => {
+                console.error("Audio play failed", err);
+            });
+        }
+
+        document.getElementById('btn-play-only').addEventListener('click', playSound);
+        
+        document.getElementById('btn-increment').addEventListener('click', async () => {
+            try {
+                const response = await fetch('/increment', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({data: "test"})
+                });
+
+                if(!response.ok) {
+                    throw new Error('Network response was not ok');
+                }
+
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('counter').textContent = data.new_value;
+                } else{
+                    alert('Something went wrong');
+                }
+            } catch (error) {
+                alert('AJAX error:', error);
+            }
+            
+        });
+        
+    </script>
+    <script>
+        const recordBtn = document.getElementById('record-btn');
+        const statusP = document.getElementById('status');
+        let mediaRecorder;
+        let audioChunks = [];
+
+        // --- THE FIX: WARM UP AUDIO ---
+        function unlockAudio() {
+            robot_audio.play().then(() => {
+                robot_audio.pause();
+                robot_audio.currentTime = 0;
+            }).catch(e => console.log("Audio unlock waiting for tap..."));
+        }
+
+        async function record(evt) {
+            try {
+                evt.preventDefault();
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder = new MediaRecorder(stream);
+                audioChunks = [];
+
+                mediaRecorder.ondataavailable = (event) => {
+                    audioChunks.push(event.data);
+                };
+
+                mediaRecorder.onstop = async () => {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    statusP.textContent = "Patience while I think about it...";
+
+                    // Send to Flask
+                    const formData = new FormData();
+                    formData.append('audio_data', audioBlob, 'test.wav');
+
+                    const resp = await fetch('/upload', {
+                        method: 'POST',
+                        body: formData
+                    });
+
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        statusP.textContent = "Attempting to vocalize...";
+                        // Force the audio element to reload the new file
+                        //robot_audio.load(); 
+
+                        
+
+                        if (data.success) {
+                            endTime = performance.now();
+                            var thinkingTime = (endTime - startTime) / 1000;
+                            statusP.textContent = "Got it in "+thinkingTime+" seconds.";
+                            document.getElementById('result').textContent = data.text_answer;
+
+                            playSound();
+                        } else{
+                            alert('Something went wrong');
+                        }
+                        
+                    } else {
+                        statusP.textContent = "Upload failed."+resp.error;
+                    }
+                };
+
+                mediaRecorder.start();
+                statusP.textContent = "Recording...";
+            } catch (err) {
+                console.error("Mic access denied", err);
+                statusP.textContent = "Mic error!"+err;
+            }
+        }
+
+        recordBtn.addEventListener('mousedown', record);
+        recordBtn.addEventListener('touchstart', record);
+
+        function stop_recording() {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+            }
+
+            startTime = performance.now();
+            // --- THE IOS FIX: Stop all tracks ---
+            mediaRecorder.stream.getTracks().forEach(track => {
+                track.stop(); 
+            });
+            // ------------------------------------
+        }
+        
+
+        recordBtn.addEventListener('mouseup', stop_recording);
+        recordBtn.addEventListener('touchend', stop_recording);
+    </script>
+</body>
+
+</html>
